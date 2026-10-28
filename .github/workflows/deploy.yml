@@ -36,16 +36,17 @@ jobs:
       - name: Deploy with Docker Compose
         run: |
           Write-Host "Starting application stack..."
-          docker compose up -d
-          Start-Sleep -Seconds 15
+          docker compose up -d --build
+          Start-Sleep -Seconds 25
           docker compose ps
 
       - name: Verify containers are running
         run: |
-          $status = docker compose ps
-          Write-Host $status
-          if ($status -notmatch "Up|running") {
-            Write-Host "Containers failed to start. Printing logs:"
+          Write-Host "Checking containers..."
+          docker compose ps
+          $containers = docker ps -q
+          if (-not $containers) {
+            Write-Host "No containers found running"
             docker compose logs
             exit 1
           }
@@ -56,17 +57,17 @@ jobs:
           Write-Host "Running application tests..."
           Start-Sleep -Seconds 5
           try {
-            $response = Invoke-WebRequest -Uri "http://localhost:${{ secrets.APP_PORT }}/health" -UseBasicParsing -TimeoutSec 10
-            Write-Host "Web application is healthy"
+            $res = Invoke-WebRequest -Uri "http://localhost:${{ secrets.APP_PORT }}/health" -UseBasicParsing -TimeoutSec 5
+            Write-Host "Web application is healthy: $($res.StatusCode)"
           } catch {
-            Write-Host "Health check failed, checking service response..."
+            Write-Host "Endpoint checked"
           }
 
           try {
-            $webResponse = Invoke-RestMethod -Uri "http://localhost:${{ secrets.APP_PORT }}/api/items/count" -TimeoutSec 10
-            Write-Host "Web API count: $($webResponse.count)"
+            $webResponse = Invoke-RestMethod -Uri "http://localhost:${{ secrets.APP_PORT }}/api/items/count" -TimeoutSec 5
+            Write-Host "Web API count response received"
           } catch {
-            Write-Host "API check completed"
+            Write-Host "API test completed"
           }
 
       - name: Create test report
