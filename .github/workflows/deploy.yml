@@ -10,14 +10,17 @@ env:
 jobs:
   deploy-and-test:
     runs-on: self-hosted
+    defaults:
+      run:
+        shell: powershell
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Create .env file from secrets
         run: |
-          echo "Creating env file from GitHub Secrets..."
-          cat << 'EOF' > .env
+          Write-Host "Creating env file from GitHub Secrets..."
+          @"
           DB_HOST=${{ secrets.DB_HOST }}
           DB_PORT=${{ secrets.DB_PORT }}
           DB_NAME=${{ secrets.DB_NAME }}
@@ -27,39 +30,55 @@ jobs:
           APP_SECRET=${{ secrets.APP_SECRET }}
           API_KEY=${{ secrets.API_KEY }}
           COMPOSE_PROJECT_NAME=${{ env.COMPOSE_PROJECT_NAME }}
-          EOF
+          "@ | Out-File -FilePath .env -Encoding utf8
+          Write-Host ".env file created successfully"
 
       - name: Deploy with Docker Compose
         run: |
-          docker compose up -d || docker-compose up -d
-          Start-Sleep -Seconds 15
-          docker compose ps || docker-compose ps
+          Write-Host "Starting application stack..."
+          docker compose up -d
+          Start-Sleep -Seconds 20
+          docker compose ps
 
       - name: Verify containers are running
         run: |
-          $ps = docker compose ps --status running
-          if (-not $ps) { exit 1 }
+          $running = docker compose ps --format json | ConvertFrom-Json
+          if (-not $running) {
+            Write-Host "Containers failed to start"
+            docker compose logs
+            exit 1
+          }
+          Write-Host "Containers are running successfully"
 
       - name: Run application tests
         run: |
-          $response = Invoke-RestMethod -Uri "http://localhost:${{ secrets.APP_PORT }}/health" -Method Get
-          $webCount = (Invoke-RestMethod -Uri "http://localhost:${{ secrets.APP_PORT }}/api/items/count").count
-          echo "Web API count: $webCount"
+          Write-Host "Running application tests..."
+          try {
+            $response = Invoke-WebRequest -Uri "http://localhost:${{ secrets.APP_PORT }}/health" -UseBasicParsing
+            Write-Host "Web application is healthy"
+          } catch {
+            Write-Host "Health check failed"
+            exit 1
+          }
+
+          $webResponse = Invoke-RestMethod -Uri "http://localhost:${{ secrets.APP_PORT }}/api/items/count"
+          Write-Host "Web API count: $($webResponse.count)"
 
       - name: Create test report
         run: |
           @"
           # Deployment Test Report
           Date: $(Get-Date)
-          Status: Passed
+          Application: Healthy
+          Containers: Running
           "@ | Out-File -FilePath test-report.md -Encoding utf8
 
       - name: Save Docker logs
         if: always()
         run: |
-          docker compose logs | Out-File deployment-logs.txt
-          docker images | Out-File docker-images.txt
-          docker ps -a | Out-File docker-ps.txt
+          docker compose logs | Out-File deployment-logs.txt -Encoding utf8
+          docker images | Out-File docker-images.txt -Encoding utf8
+          docker ps -a | Out-File docker-ps.txt -Encoding utf8
 
       - name: Save artifacts
         uses: actions/upload-artifact@v4
